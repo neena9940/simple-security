@@ -1,27 +1,19 @@
 version: '3.8'
-
 services:
   log-collector:
     build: ./log-collector
     ports:
-      - "8005:8005"
-    networks:
-      - security-net
+      - "5006:5006"
+    restart: unless-stopped
 
   analyzer:
     build: ./analyzer
     ports:
-      - "8006:8006"
-    networks:
-      - security-net
+      - "5007:5007"
+    restart: unless-stopped
 
   dashboard:
     build: ./dashboard
     ports:
-      - "8007:8007"
-    networks:
-      - security-net
-
-networks:
-  security-net:
-    driver: bridge
+      - "5008:5008"
+    restart: unless-stopped

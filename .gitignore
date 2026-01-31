@@ -24,14 +24,11 @@ venv/
 .AppleDouble
 .LSOverride
 
-# Local testing
-*.local
+# Secrets - NEVER commit these!
+*.json
+*.key
 .env
 secrets/
 keys/
-*.json  # Exclude service account keys
-
-# Cloud
 gcp-key.json
 service-account.json
-github-key.json
