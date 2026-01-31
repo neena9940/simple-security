@@ -1,0 +1,102 @@
+#!/bin/bash
+echo "🚀 Setting up CI/CD..."
+cd "$(dirname "$0")"
+mkdir -p .github/workflows
+cat > .github/workflows/deploy.yml << 'DEPLOYEOF'
+name: Deploy to Google Cloud Run
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PROJECT_ID: \${{ secrets.GCP_PROJECT_ID }}
+  REGION: us-central1
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Test log-collector
+      run: |
+        cd log-collector
+        pip install -r requirements.txt
+        python -c "import sys; from log_collector import app; print('✅ Log collector imports OK')"
+    
+    - name: Test analyzer
+      run: |
+        cd analyzer
+        pip install -r requirements.txt
+        python -c "import sys; from analyzer import app; print('✅ Analyzer imports OK')"
+    
+    - name: Test dashboard
+      run: |
+        cd dashboard
+        pip install -r requirements.txt
+        python -c "import sys; from dashboard import app; print('✅ Dashboard imports OK')"
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: \${{ secrets.GCP_SA_KEY }}
+    
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+    
+    - name: Configure Docker
+      run: gcloud auth configure-docker gcr.io --quiet
+    
+    - name: Deploy Services
+      run: |
+        for service in log-collector analyzer dashboard; do
+          cd \$service
+          
+          # Build and push
+          docker build --platform linux/amd64 -t gcr.io/\$PROJECT_ID/\$service:\${{ github.sha }} .
+          docker push gcr.io/\$PROJECT_ID/\$service:\${{ github.sha }}
+          
+          # Deploy to Cloud Run
+          if [ "\$service" = "log-collector" ]; then
+            ANALYZER_URL=\$(gcloud run services describe analyzer --region=\$REGION --format="value(status.url)" || echo "")
+            ENV_VARS="--set-env-vars=ANALYZER_URL=\$ANALYZER_URL"
+          elif [ "\$service" = "analyzer" ]; then
+            DASHBOARD_URL=\$(gcloud run services describe dashboard --region=\$REGION --format="value(status.url)" || echo "")
+            ENV_VARS="--set-env-vars=DASHBOARD_URL=\$DASHBOARD_URL"
+          else
+            ENV_VARS=""
+          fi
+          
+          gcloud run deploy \$service \
+            --image gcr.io/\$PROJECT_ID/\$service:\${{ github.sha }} \
+            --region \$REGION \
+            --platform managed \
+            --allow-unauthenticated \
+            --cpu=1 \
+            --memory=256Mi \
+            --max-instances=1 \
+            --min-instances=0 \
+            --port=\$((8004 + \$(echo \$service | wc -c))) \
+            \$ENV_VARS \
+            --quiet
+          
+          cd ..
+        done
+DEPLOYEOF
+echo "✅ Created .github/workflows/deploy.yml"
